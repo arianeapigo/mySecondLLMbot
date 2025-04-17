@@ -15,12 +15,16 @@ st.set_page_config(
     layout="wide"
 )
 
+# import datetime library to get today's date
+from datetime import datetime
+current_date = datetime.now().strftime("%Y-%m-%d")
+
 # Initialize session state variables if they don't exist
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
 
 if "system_message" not in st.session_state:
-    st.session_state.system_message = "You are a helpful assistant."
+    st.session_state.system_message = f"Today is {current_date}. You are a helpful assistant."
 
 if "usage_stats" not in st.session_state:
     st.session_state.usage_stats = []
