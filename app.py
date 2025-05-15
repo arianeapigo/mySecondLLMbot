@@ -110,31 +110,15 @@ def generate_response(prompt, system_message, bot_id="bot1"):
     messages.append({"role": "user", "content": prompt})
     
     try:
-        # Container for the assistant's response in the chat interface
-        response_container = st.chat_message("assistant")
-        full_response = ""
-        usage = None
-        
+        # Create a response without streaming for the side-by-side view
         response = client.chat.completions.create(
             messages=messages,
             model=model_name,
-            stream=True,
-            stream_options={'include_usage': True}
+            stream=False
         )
         
-        # Stream the response
-        message_placeholder = response_container.empty()
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                content_chunk = chunk.choices[0].delta.content
-                full_response += content_chunk
-                message_placeholder.markdown(full_response + "▌")
-                    
-            if chunk.usage:
-                usage = chunk.usage
-        
-        # Update the final response without the cursor
-        message_placeholder.markdown(full_response)
+        # Get the full response
+        full_response = response.choices[0].message.content
         
         # Add the message to the appropriate history
         if bot_id == "bot1":
@@ -143,9 +127,9 @@ def generate_response(prompt, system_message, bot_id="bot1"):
             st.session_state.messages_bot2.append({"role": "assistant", "content": full_response})
         
         # Store usage stats if available
-        if usage:
-            # Fix for Pydantic deprecation warning - use model_dump instead of dict
-            usage_dict = usage.model_dump() if hasattr(usage, 'model_dump') else usage.dict()
+        usage_dict = None
+        if hasattr(response, 'usage') and response.usage:
+            usage_dict = response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage.dict()
             stats_entry = {
                 "prompt_tokens": usage_dict.get("prompt_tokens", 0),
                 "completion_tokens": usage_dict.get("completion_tokens", 0),
@@ -158,33 +142,33 @@ def generate_response(prompt, system_message, bot_id="bot1"):
             else:
                 st.session_state.usage_stats_bot2.append(stats_entry)
         
-        # If show process is enabled, display the process details AFTER the response
+        # Show process details if enabled
         if st.session_state.show_process:
+            # Create a container for process details (will appear below the chatbots)
             process_container = st.container()
+            
             with process_container:
-                st.markdown("### Model Process")
+                st.markdown(f"### Process Details - {bot_id.capitalize()}")
                 
-                # Create expanders for process details - all collapsed by default
-                request_expander = st.expander("Request Details", expanded=False)
-                with request_expander:
-                    st.markdown("**System Message:**")
-                    st.code(system_message)
-                    st.markdown("**User Input:**")
-                    st.code(prompt)
+                col_sys, col_resp = st.columns(2)
                 
-                # Container for displaying raw response
-                response_expander = st.expander("Raw Response", expanded=False)
-                with response_expander:
-                    st.code(full_response, language="markdown")
+                with col_sys:
+                    with st.expander("System Message", expanded=False):
+                        st.code(system_message)
+                    
+                    with st.expander("Full Conversation", expanded=False):
+                        for msg in messages:
+                            st.write(f"**{msg['role'].capitalize()}:** {msg['content']}")
                 
-                # Container for usage stats
-                if usage:
-                    usage_expander = st.expander("Usage Statistics", expanded=False)
-                    with usage_expander:
-                        st.markdown("**Usage Statistics:**")
-                        st.markdown(f"- Prompt tokens: {usage_dict.get("prompt_tokens", 0)}")
-                        st.markdown(f"- Completion tokens: {usage_dict.get("completion_tokens", 0)}")
-                        st.markdown(f"- Total tokens: {usage_dict.get("total_tokens", 0)}")
+                with col_resp:
+                    with st.expander("Response", expanded=False):
+                        st.code(full_response)
+                    
+                    if usage_dict:
+                        with st.expander("Usage Stats", expanded=False):
+                            st.write(f"Prompt tokens: {usage_dict.get('prompt_tokens', 0)}")
+                            st.write(f"Completion tokens: {usage_dict.get('completion_tokens', 0)}")
+                            st.write(f"Total tokens: {usage_dict.get('total_tokens', 0)}")
         
         return True
     except Exception as e:
@@ -194,204 +178,205 @@ def generate_response(prompt, system_message, bot_id="bot1"):
 # UI Layout
 st.title("🤖 HAI-5014's Dual Chatbot")
 
-# Add CSS to make the input box stick to the bottom
-st.markdown("""
-    <style>
-    .stChatFloatingInputContainer {
-        position: fixed !important;
-        bottom: 0 !important;
-        padding: 1rem !important;
-        width: calc(100% - 250px) !important; /* Adjust for sidebar width */
-        background-color: white !important;
-        z-index: 1000 !important;
-    }
-    .main-content {
-        padding-bottom: 100px; /* Add space at the bottom for the fixed input */
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 # Sidebar for settings
 with st.sidebar:
-    st.subheader("Chatbot Selection")
+    st.header("Settings")
     
-    # Add radio buttons to switch between chatbots
-    selected_bot = st.radio(
-        "Select Active Chatbot",
-        ["Chatbot 1", "Chatbot 2"],
-        index=0 if st.session_state.active_bot == "bot1" else 1,
-        key="bot_selector"
-    )
+    # Tabs for bot settings
+    tab1, tab2 = st.tabs(["Chatbot 1", "Chatbot 2"])
     
-    # Update active bot based on selection
-    st.session_state.active_bot = "bot1" if selected_bot == "Chatbot 1" else "bot2"
-    
-    st.subheader("Settings")
-    
-    # Determine which system message to display based on active bot
-    if st.session_state.active_bot == "bot1":
-        system_message_value = st.session_state.system_message
-        system_message_key = "system_message_input"
-    else:
-        system_message_value = st.session_state.system_message_bot2
-        system_message_key = "system_message_bot2_input"
-    
-    # System message editor
-    st.text_area(
-        f"Edit System Message for {selected_bot}", 
-        value=system_message_value,
-        key=system_message_key,
-        height=150
-    )
-    
-    if st.button("Update System Message"):
-        if st.session_state.active_bot == "bot1":
-            st.session_state.system_message = st.session_state.system_message_input
-        else:
-            st.session_state.system_message_bot2 = st.session_state.system_message_bot2_input
-        st.success(f"System message updated for {selected_bot}!")
-    
-    # Experiment loader section
-    st.markdown("---")
-    st.subheader("Experiment Loader")
-    
-    experiments = load_experiments()
-    if experiments:
-        # First dropdown: select experiment with a blank default option
-        experiment_names = ["Select an experiment"] + [exp.get('experiment_name', "Unnamed Experiment") for exp in experiments]
-        exp_index = st.selectbox(
-            "Select Experiment", 
-            range(len(experiment_names)),
-            format_func=lambda i: experiment_names[i]
-        ) 
+    with tab1:
+        # System message editor for Bot 1
+        st.subheader("System Message")
+        system_message_bot1 = st.text_area(
+            "Edit System Message", 
+            value=st.session_state.system_message,
+            key="system_message_input",
+            height=150,
+            label_visibility="collapsed"
+        )
         
-        # Only proceed if a valid experiment is selected (not the blank option)
-        if exp_index > 0:
-            selected_experiment = experiments[exp_index - 1]  # Adjust index for the actual experiment
-            
-            # Second dropdown: select condition within the experiment with a blank default
-            if 'conditions' in selected_experiment and selected_experiment['conditions']:
-                condition_names = ["Select a condition"] + [cond.get('label', f"Condition {i+1}") 
-                                  for i, cond in enumerate(selected_experiment['conditions'])]
-                cond_index = st.selectbox(
-                    "Select Condition", 
-                    range(len(condition_names)),
-                    format_func=lambda i: condition_names[i]
-                )
-                
-                # Only enable the load button if a valid condition is selected
-                if cond_index > 0:
-                    selected_condition = selected_experiment['conditions'][cond_index - 1]  # Adjust index
-                    
-                    # Preview the system message
-                    st.markdown("### Preview: System Message")
-                    system_prompt = selected_condition.get('system_prompt', "You are a helpful assistant.")
-                    # Fix empty label warning by providing a label
-                    st.text_area(
-                        "System Prompt Preview", 
-                        value=system_prompt, 
-                        height=120, 
-                        disabled=True, 
-                        key="preview_system_message",
-                        label_visibility="collapsed"  # Hide the label but still provide one
-                    )
-                    
-                    # Load button
-                    if st.button("Load Experiment"):
-                        # Update system message
-                        st.session_state.system_message = system_prompt
-                        
-                        # Clear chat and start with opening message
-                        opening_message = selected_condition.get('opening_message', "How can I help you today?")
-                        st.session_state.messages = [{"role": "assistant", "content": opening_message}]
-                        st.session_state.usage_stats = []
-                        
-                        # Save selected experiment and condition
-                        st.session_state.selected_experiment = experiment_names[exp_index]
-                        st.session_state.selected_condition = condition_names[cond_index]
-                        
-                        st.success(f"Loaded: {experiment_names[exp_index]} - {condition_names[cond_index]}")
-                        st.rerun()
-            else:
-                st.warning("Selected experiment has no conditions.")
-    else:
-        st.warning("No experiment files found in the 'prompts' directory.")
-    
-    # Chat history viewer
-    with st.expander("View Chat History"):
-        if st.session_state.active_bot == "bot1":
-            st.json(st.session_state.messages)
-        else:
-            st.json(st.session_state.messages_bot2)
-    
-    # Usage statistics viewer
-    with st.expander("View Usage Statistics"):
-        usage_stats = st.session_state.usage_stats if st.session_state.active_bot == "bot1" else st.session_state.usage_stats_bot2
+        if st.button("Update System Message", key="update_system_1"):
+            st.session_state.system_message = system_message_bot1
+            st.success("System message updated for Chatbot 1!")
         
-        if usage_stats:
-            for i, usage in enumerate(usage_stats):
-                st.write(f"Message {i+1}:")
-                st.write(f"- Prompt tokens: {usage['prompt_tokens']}")
-                st.write(f"- Completion tokens: {usage['completion_tokens']}")
-                st.write(f"- Total tokens: {usage['total_tokens']}")
-                st.divider()
-            
-            # Calculate total usage
-            total_prompt = sum(u["prompt_tokens"] for u in usage_stats)
-            total_completion = sum(u["completion_tokens"] for u in usage_stats)
-            total = sum(u["total_tokens"] for u in usage_stats)
-            
-            st.write("### Total Usage")
-            st.write(f"- Total prompt tokens: {total_prompt}")
-            st.write(f"- Total completion tokens: {total_completion}")
-            st.write(f"- Total tokens: {total}")
-        else:
-            st.write("No usage data available yet.")
-    
-    # Clear chat button
-    if st.button(f"Clear {selected_bot} Chat"):
-        if st.session_state.active_bot == "bot1":
+        if st.button("Clear Chat History", key="clear_chat_1"):
             st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
             st.session_state.usage_stats = []
-        else:
+            st.success("Chat history cleared for Chatbot 1")
+    
+    with tab2:
+        # System message editor for Bot 2
+        st.subheader("System Message")
+        system_message_bot2 = st.text_area(
+            "Edit System Message", 
+            value=st.session_state.system_message_bot2,
+            key="system_message_bot2_input",
+            height=150,
+            label_visibility="collapsed"
+        )
+        
+        if st.button("Update System Message", key="update_system_2"):
+            st.session_state.system_message_bot2 = system_message_bot2
+            st.success("System message updated for Chatbot 2!")
+        
+        if st.button("Clear Chat History", key="clear_chat_2"):
             st.session_state.messages_bot2 = [{"role": "assistant", "content": "I'm the second assistant. How can I help?"}]
             st.session_state.usage_stats_bot2 = []
-        st.success(f"{selected_bot} chat history cleared!")
+            st.success("Chat history cleared for Chatbot 2")
     
+    # Process toggle
     st.markdown("---")
-    st.session_state.show_process = st.checkbox("Show Model Process (Last message)", value=st.session_state.show_process)
+    show_process = st.checkbox("Show Model Process", value=st.session_state.show_process, key="process_toggle")
+    if show_process != st.session_state.show_process:
+        st.session_state.show_process = show_process
+        st.rerun()
+    
+    # Experiments section if needed
+    if st.session_state.selected_experiment:
+        st.markdown("---")
+        st.subheader("Current Experiment")
+        st.write(f"**Experiment:** {st.session_state.selected_experiment['name']}")
+        if st.session_state.selected_condition:
+            st.write(f"**Condition:** {st.session_state.selected_condition['name']}")
+    
+    # Chat history and usage statistics
+    st.markdown("---")
+    
+    with st.expander("Chatbot 1 Usage Stats", expanded=False):
+        if st.session_state.usage_stats:
+            total_prompt = sum(u["prompt_tokens"] for u in st.session_state.usage_stats)
+            total_completion = sum(u["completion_tokens"] for u in st.session_state.usage_stats)
+            total_tokens = sum(u["total_tokens"] for u in st.session_state.usage_stats)
+            
+            st.metric("Total Tokens", total_tokens)
+            st.metric("Prompt Tokens", total_prompt)
+            st.metric("Completion Tokens", total_completion)
+        else:
+            st.info("No usage data available")
+    
+    with st.expander("Chatbot 2 Usage Stats", expanded=False):
+        if st.session_state.usage_stats_bot2:
+            total_prompt = sum(u["prompt_tokens"] for u in st.session_state.usage_stats_bot2)
+            total_completion = sum(u["completion_tokens"] for u in st.session_state.usage_stats_bot2)
+            total_tokens = sum(u["total_tokens"] for u in st.session_state.usage_stats_bot2)
+            
+            st.metric("Total Tokens", total_tokens)
+            st.metric("Prompt Tokens", total_prompt)
+            st.metric("Completion Tokens", total_completion)
+        else:
+            st.info("No usage data available")
 
-# Determine which messages to display based on the active bot
-active_messages = st.session_state.messages if st.session_state.active_bot == "bot1" else st.session_state.messages_bot2
-active_system_message = st.session_state.system_message if st.session_state.active_bot == "bot1" else st.session_state.system_message_bot2
+# Use columns for the side-by-side layout
+col1, col2 = st.columns(2)
 
-# Main chat area with padding at bottom
-chat_container = st.container()
-with chat_container:
-    st.markdown('<div class="main-content">', unsafe_allow_html=True)  # Add a container with padding
+# First Chatbot Column
+with col1:
+    st.header("Chatbot 1")
     
-    # Display currently active bot label
-    st.markdown(f"### Currently Active: **{selected_bot}**")
+    # Container for chat messages with fixed height
+    chat_container1 = st.container()
     
-    # Display chat messages for the active bot
-    for message in active_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    with chat_container1:
+        # Create styled container with scrolling
+        st.markdown("""
+            <style>
+            .chat-container {
+                height: 400px;
+                overflow-y: auto;
+                border: 1px solid #ddd;
+                border-radius: 10px;
+                padding: 15px;
+                margin-bottom: 15px;
+            }
+            </style>
+            <div class="chat-container" id="chat1">
+        """, unsafe_allow_html=True)
+        
+        # Display messages for bot 1 using standard markdown
+        # (st.chat_message doesn't work well in scrollable containers)
+        for message in st.session_state.messages:
+            if message["role"] == "user":
+                st.markdown(f"""
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                        <div style="background-color: #E9F5FD; padding: 10px; border-radius: 10px; max-width: 80%;">
+                            <strong>You:</strong> {message['content']}
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div style="display: flex; margin-bottom: 10px;">
+                        <div style="background-color: #F0F2F6; padding: 10px; border-radius: 10px; max-width: 80%;">
+                            <strong>Assistant:</strong> {message['content']}
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
     
-    st.markdown('</div>', unsafe_allow_html=True)  # Close the container
+    # Input for Chatbot 1
+    prompt_bot1 = st.text_input("Ask Chatbot 1", key="input_bot1")
+    if st.button("Send", key="send_bot1") or prompt_bot1:
+        if prompt_bot1:  # Only proceed if there's text input
+            # Add user message to history
+            st.session_state.messages.append({"role": "user", "content": prompt_bot1})
+            
+            # Generate response for bot1
+            generate_response(prompt_bot1, st.session_state.system_message, "bot1")
+            
+            # Clear the input field
+            st.session_state.input_bot1 = ""
+            
+            # Rerun to refresh the UI
+            st.rerun()
 
-# Chat input - moved outside the main container
-if prompt := st.chat_input(f"Ask {selected_bot} anything..."):
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# Second Chatbot Column
+with col2:
+    st.header("Chatbot 2")
     
-    # Add user message to appropriate history
-    if st.session_state.active_bot == "bot1":
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        # Generate and display response for bot1
-        generate_response(prompt, st.session_state.system_message, "bot1")
-    else:
-        st.session_state.messages_bot2.append({"role": "user", "content": prompt})
-        # Generate and display response for bot2
-        generate_response(prompt, st.session_state.system_message_bot2, "bot2")
+    # Container for chat messages with fixed height
+    chat_container2 = st.container()
+    
+    with chat_container2:
+        # Create styled container with scrolling
+        st.markdown("""
+            <div class="chat-container" id="chat2">
+        """, unsafe_allow_html=True)
+        
+        # Display messages for bot 2
+        for message in st.session_state.messages_bot2:
+            if message["role"] == "user":
+                st.markdown(f"""
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                        <div style="background-color: #E9F5FD; padding: 10px; border-radius: 10px; max-width: 80%;">
+                            <strong>You:</strong> {message['content']}
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div style="display: flex; margin-bottom: 10px;">
+                        <div style="background-color: #F0F2F6; padding: 10px; border-radius: 10px; max-width: 80%;">
+                            <strong>Assistant:</strong> {message['content']}
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Input for Chatbot 2
+    prompt_bot2 = st.text_input("Ask Chatbot 2", key="input_bot2")
+    if st.button("Send", key="send_bot2") or prompt_bot2:
+        if prompt_bot2:  # Only proceed if there's text input
+            # Add user message to history
+            st.session_state.messages_bot2.append({"role": "user", "content": prompt_bot2})
+            
+            # Generate response for bot2
+            generate_response(prompt_bot2, st.session_state.system_message_bot2, "bot2")
+            
+            # Clear the input field
+            st.session_state.input_bot2 = ""
+            
+            # Rerun to refresh the UI
+            st.rerun()
