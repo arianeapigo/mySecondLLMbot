@@ -77,7 +77,7 @@ def get_openai_client():
     endpoint = os.getenv("GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/openai/")
     
     if not token:
-        st.error("Gemini API key not found in environment variables. Please check your .env file.")
+        st.error("GitHub token not found in environment variables. Please check your .env file.")
         st.stop()
         
     return OpenAI(
