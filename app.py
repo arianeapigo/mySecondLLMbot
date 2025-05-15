@@ -23,11 +23,20 @@ current_date = datetime.now().strftime("%Y-%m-%d")
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
 
+if "messages_bot2" not in st.session_state:
+    st.session_state.messages_bot2 = [{"role": "assistant", "content": "I'm the second assistant. How can I help?"}]
+
 if "system_message" not in st.session_state:
     st.session_state.system_message = f"Today is {current_date}. You are a helpful assistant."
 
+if "system_message_bot2" not in st.session_state:
+    st.session_state.system_message_bot2 = f"Today is {current_date}. You are a creative assistant focused on innovation."
+
 if "usage_stats" not in st.session_state:
     st.session_state.usage_stats = []
+
+if "usage_stats_bot2" not in st.session_state:
+    st.session_state.usage_stats_bot2 = []
 
 if "selected_experiment" not in st.session_state:
     st.session_state.selected_experiment = None
@@ -37,6 +46,9 @@ if "selected_condition" not in st.session_state:
 
 if "show_process" not in st.session_state:
     st.session_state.show_process = False
+
+if "active_bot" not in st.session_state:
+    st.session_state.active_bot = "bot1"
 
 def load_experiments():
     """Load all experiment JSON files from the prompts directory"""
@@ -61,7 +73,8 @@ def load_experiments():
 def get_openai_client():
     """Create and return an OpenAI client configured with environment variables"""
     token = os.getenv("GEMINI_KEY")
-    endpoint = os.getenv("LLM_ENDPOINT")
+    # Use os.getenv to get the endpoint instead of hardcoding it
+    endpoint = os.getenv("GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/openai/")
     
     if not token:
         st.error("Gemini API key not found in environment variables. Please check your .env file.")
@@ -72,16 +85,24 @@ def get_openai_client():
         api_key=token,
     )
 
-def generate_response(prompt, system_message):
+def generate_response(prompt, system_message, bot_id="bot1"):
     """Generate a response from the model and track usage"""
     client = get_openai_client()
     model_name = os.getenv("LLM_MODEL")
+    
+    # Determine which message and usage history to use
+    if bot_id == "bot1":
+        messages_history = st.session_state.messages
+        usage_stats = st.session_state.usage_stats
+    else:
+        messages_history = st.session_state.messages_bot2
+        usage_stats = st.session_state.usage_stats_bot2
     
     # Prepare messages by including all history and the system message
     messages = [{"role": "system", "content": system_message}]
     
     # Add all previous messages from history
-    for msg in st.session_state.messages:
+    for msg in messages_history:
         if msg["role"] != "system":  # Skip system messages as we've already added it
             messages.append(msg)
     
@@ -115,18 +136,27 @@ def generate_response(prompt, system_message):
         # Update the final response without the cursor
         message_placeholder.markdown(full_response)
         
-        # Add the message to history
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        # Add the message to the appropriate history
+        if bot_id == "bot1":
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+        else:
+            st.session_state.messages_bot2.append({"role": "assistant", "content": full_response})
         
         # Store usage stats if available
         if usage:
             # Fix for Pydantic deprecation warning - use model_dump instead of dict
             usage_dict = usage.model_dump() if hasattr(usage, 'model_dump') else usage.dict()
-            st.session_state.usage_stats.append({
+            stats_entry = {
                 "prompt_tokens": usage_dict.get("prompt_tokens", 0),
                 "completion_tokens": usage_dict.get("completion_tokens", 0),
                 "total_tokens": usage_dict.get("total_tokens", 0)
-            })
+            }
+            
+            # Store in the appropriate usage stats
+            if bot_id == "bot1":
+                st.session_state.usage_stats.append(stats_entry)
+            else:
+                st.session_state.usage_stats_bot2.append(stats_entry)
         
         # If show process is enabled, display the process details AFTER the response
         if st.session_state.show_process:
@@ -152,9 +182,9 @@ def generate_response(prompt, system_message):
                     usage_expander = st.expander("Usage Statistics", expanded=False)
                     with usage_expander:
                         st.markdown("**Usage Statistics:**")
-                        st.markdown(f"- Prompt tokens: {usage_dict.get('prompt_tokens', 0)}")
-                        st.markdown(f"- Completion tokens: {usage_dict.get('completion_tokens', 0)}")
-                        st.markdown(f"- Total tokens: {usage_dict.get('total_tokens', 0)}")
+                        st.markdown(f"- Prompt tokens: {usage_dict.get("prompt_tokens", 0)}")
+                        st.markdown(f"- Completion tokens: {usage_dict.get("completion_tokens", 0)}")
+                        st.markdown(f"- Total tokens: {usage_dict.get("total_tokens", 0)}")
         
         return True
     except Exception as e:
@@ -162,7 +192,7 @@ def generate_response(prompt, system_message):
         return False
 
 # UI Layout
-st.title("🤖 HAI-5014's Second Chatbot")
+st.title("🤖 HAI-5014's Dual Chatbot")
 
 # Add CSS to make the input box stick to the bottom
 st.markdown("""
@@ -183,20 +213,43 @@ st.markdown("""
 
 # Sidebar for settings
 with st.sidebar:
+    st.subheader("Chatbot Selection")
+    
+    # Add radio buttons to switch between chatbots
+    selected_bot = st.radio(
+        "Select Active Chatbot",
+        ["Chatbot 1", "Chatbot 2"],
+        index=0 if st.session_state.active_bot == "bot1" else 1,
+        key="bot_selector"
+    )
+    
+    # Update active bot based on selection
+    st.session_state.active_bot = "bot1" if selected_bot == "Chatbot 1" else "bot2"
+    
     st.subheader("Settings")
     
-    # System message editor - use the value from session_state directly
-    system_message_value = st.session_state.system_message
+    # Determine which system message to display based on active bot
+    if st.session_state.active_bot == "bot1":
+        system_message_value = st.session_state.system_message
+        system_message_key = "system_message_input"
+    else:
+        system_message_value = st.session_state.system_message_bot2
+        system_message_key = "system_message_bot2_input"
+    
+    # System message editor
     st.text_area(
-        "Edit System Message", 
+        f"Edit System Message for {selected_bot}", 
         value=system_message_value,
-        key="system_message_input",
+        key=system_message_key,
         height=150
     )
     
     if st.button("Update System Message"):
-        st.session_state.system_message = st.session_state.system_message_input
-        st.success("System message updated!")
+        if st.session_state.active_bot == "bot1":
+            st.session_state.system_message = st.session_state.system_message_input
+        else:
+            st.session_state.system_message_bot2 = st.session_state.system_message_bot2_input
+        st.success(f"System message updated for {selected_bot}!")
     
     # Experiment loader section
     st.markdown("---")
@@ -264,17 +317,19 @@ with st.sidebar:
     else:
         st.warning("No experiment files found in the 'prompts' directory.")
     
-    # Chat history viewer and other sidebar elements
-    st.markdown("---")
-    
     # Chat history viewer
     with st.expander("View Chat History"):
-        st.json(st.session_state.messages)
+        if st.session_state.active_bot == "bot1":
+            st.json(st.session_state.messages)
+        else:
+            st.json(st.session_state.messages_bot2)
     
     # Usage statistics viewer
     with st.expander("View Usage Statistics"):
-        if st.session_state.usage_stats:
-            for i, usage in enumerate(st.session_state.usage_stats):
+        usage_stats = st.session_state.usage_stats if st.session_state.active_bot == "bot1" else st.session_state.usage_stats_bot2
+        
+        if usage_stats:
+            for i, usage in enumerate(usage_stats):
                 st.write(f"Message {i+1}:")
                 st.write(f"- Prompt tokens: {usage['prompt_tokens']}")
                 st.write(f"- Completion tokens: {usage['completion_tokens']}")
@@ -282,9 +337,9 @@ with st.sidebar:
                 st.divider()
             
             # Calculate total usage
-            total_prompt = sum(u["prompt_tokens"] for u in st.session_state.usage_stats)
-            total_completion = sum(u["completion_tokens"] for u in st.session_state.usage_stats)
-            total = sum(u["total_tokens"] for u in st.session_state.usage_stats)
+            total_prompt = sum(u["prompt_tokens"] for u in usage_stats)
+            total_completion = sum(u["completion_tokens"] for u in usage_stats)
+            total = sum(u["total_tokens"] for u in usage_stats)
             
             st.write("### Total Usage")
             st.write(f"- Total prompt tokens: {total_prompt}")
@@ -294,35 +349,49 @@ with st.sidebar:
             st.write("No usage data available yet.")
     
     # Clear chat button
-    if st.button("Clear Chat"):
-        st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
-        st.session_state.usage_stats = []
-        st.success("Chat history cleared!")
+    if st.button(f"Clear {selected_bot} Chat"):
+        if st.session_state.active_bot == "bot1":
+            st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
+            st.session_state.usage_stats = []
+        else:
+            st.session_state.messages_bot2 = [{"role": "assistant", "content": "I'm the second assistant. How can I help?"}]
+            st.session_state.usage_stats_bot2 = []
+        st.success(f"{selected_bot} chat history cleared!")
     
-    # Process display toggle - moved to bottom
     st.markdown("---")
     st.session_state.show_process = st.checkbox("Show Model Process (Last message)", value=st.session_state.show_process)
+
+# Determine which messages to display based on the active bot
+active_messages = st.session_state.messages if st.session_state.active_bot == "bot1" else st.session_state.messages_bot2
+active_system_message = st.session_state.system_message if st.session_state.active_bot == "bot1" else st.session_state.system_message_bot2
 
 # Main chat area with padding at bottom
 chat_container = st.container()
 with chat_container:
     st.markdown('<div class="main-content">', unsafe_allow_html=True)  # Add a container with padding
     
-    # Display chat messages
-    for message in st.session_state.messages:
+    # Display currently active bot label
+    st.markdown(f"### Currently Active: **{selected_bot}**")
+    
+    # Display chat messages for the active bot
+    for message in active_messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
     st.markdown('</div>', unsafe_allow_html=True)  # Close the container
 
 # Chat input - moved outside the main container
-if prompt := st.chat_input("Ask me anything..."):
+if prompt := st.chat_input(f"Ask {selected_bot} anything..."):
     # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Add user message to history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Generate and display response
-    generate_response(prompt, st.session_state.system_message)
+    # Add user message to appropriate history
+    if st.session_state.active_bot == "bot1":
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        # Generate and display response for bot1
+        generate_response(prompt, st.session_state.system_message, "bot1")
+    else:
+        st.session_state.messages_bot2.append({"role": "user", "content": prompt})
+        # Generate and display response for bot2
+        generate_response(prompt, st.session_state.system_message_bot2, "bot2")
