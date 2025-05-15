@@ -74,7 +74,7 @@ def load_experiments():
 def get_openai_client():
     """Create and return an OpenAI client configured with environment variables"""
     token = os.getenv("GEMINI_KEY")
-    endpoint = os.getenv("LLM_ENDPOINT")
+    endpoint = os.getenv("LLM_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/openai/")
     
     if not token:
         st.error("Gemini API key not found in environment variables. Please check your .env file.")
@@ -88,7 +88,7 @@ def get_openai_client():
 def generate_response(prompt, system_message, bot_num=1):
     """Generate a response from the model and track usage"""
     client = get_openai_client()
-    model_name = os.getenv("LLM_MODEL")
+    model_name = "gemini-2.0-flash"
     
     # Use the appropriate session state variables based on bot_num
     messages_key = "messages" if bot_num == 1 else "messages2"
