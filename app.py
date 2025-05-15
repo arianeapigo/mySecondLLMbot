@@ -38,6 +38,19 @@ if "selected_condition" not in st.session_state:
 if "show_process" not in st.session_state:
     st.session_state.show_process = False
 
+# Initialize session state variables for the second chatbot
+if "messages2" not in st.session_state:
+    st.session_state.messages2 = [{"role": "assistant", "content": "How can I help you today?"}]
+
+if "system_message2" not in st.session_state:
+    st.session_state.system_message2 = f"Today is {current_date}. You are a helpful assistant."
+
+if "usage_stats2" not in st.session_state:
+    st.session_state.usage_stats2 = []
+
+if "show_process2" not in st.session_state:
+    st.session_state.show_process2 = False
+
 def load_experiments():
     """Load all experiment JSON files from the prompts directory"""
     experiments = []
@@ -72,16 +85,21 @@ def get_openai_client():
         api_key=token,
     )
 
-def generate_response(prompt, system_message):
+def generate_response(prompt, system_message, bot_num=1):
     """Generate a response from the model and track usage"""
     client = get_openai_client()
     model_name = os.getenv("LLM_MODEL")
+    
+    # Use the appropriate session state variables based on bot_num
+    messages_key = "messages" if bot_num == 1 else "messages2"
+    usage_stats_key = "usage_stats" if bot_num == 1 else "usage_stats2"
+    show_process_key = "show_process" if bot_num == 1 else "show_process2"
     
     # Prepare messages by including all history and the system message
     messages = [{"role": "system", "content": system_message}]
     
     # Add all previous messages from history
-    for msg in st.session_state.messages:
+    for msg in st.session_state[messages_key]:
         if msg["role"] != "system":  # Skip system messages as we've already added it
             messages.append(msg)
     
@@ -116,23 +134,23 @@ def generate_response(prompt, system_message):
         message_placeholder.markdown(full_response)
         
         # Add the message to history
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        st.session_state[messages_key].append({"role": "assistant", "content": full_response})
         
         # Store usage stats if available
         if usage:
             # Fix for Pydantic deprecation warning - use model_dump instead of dict
             usage_dict = usage.model_dump() if hasattr(usage, 'model_dump') else usage.dict()
-            st.session_state.usage_stats.append({
+            st.session_state[usage_stats_key].append({
                 "prompt_tokens": usage_dict.get("prompt_tokens", 0),
                 "completion_tokens": usage_dict.get("completion_tokens", 0),
                 "total_tokens": usage_dict.get("total_tokens", 0)
             })
         
         # If show process is enabled, display the process details AFTER the response
-        if st.session_state.show_process:
+        if st.session_state[show_process_key]:
             process_container = st.container()
             with process_container:
-                st.markdown("### Model Process")
+                st.markdown(f"### Model Process (Bot {bot_num})")
                 
                 # Create expanders for process details - all collapsed by default
                 request_expander = st.expander("Request Details", expanded=False)
@@ -162,7 +180,7 @@ def generate_response(prompt, system_message):
         return False
 
 # UI Layout
-st.title("🤖 HAI-5014's Second Chatbot")
+st.title("🤖 HAI-5014's Dual Chatbot Interface")
 
 # Add CSS to make the input box stick to the bottom
 st.markdown("""
@@ -171,7 +189,7 @@ st.markdown("""
         position: fixed !important;
         bottom: 0 !important;
         padding: 1rem !important;
-        width: calc(100% - 250px) !important; /* Adjust for sidebar width */
+        width: calc(50% - 125px) !important; /* Adjust for sidebar width and split in half */
         background-color: white !important;
         z-index: 1000 !important;
     }
@@ -183,7 +201,7 @@ st.markdown("""
 
 # Sidebar for settings
 with st.sidebar:
-    st.subheader("Settings")
+    st.subheader("Chatbot 1 Settings")
     
     # System message editor - use the value from session_state directly
     system_message_value = st.session_state.system_message
@@ -197,6 +215,23 @@ with st.sidebar:
     if st.button("Update System Message"):
         st.session_state.system_message = st.session_state.system_message_input
         st.success("System message updated!")
+    
+    # Chatbot 2 settings
+    st.markdown("---")
+    st.subheader("Chatbot 2 Settings")
+    
+    # System message editor for chatbot 2
+    system_message_value2 = st.session_state.system_message2
+    st.text_area(
+        "Edit System Message", 
+        value=system_message_value2,
+        key="system_message_input2",
+        height=150
+    )
+    
+    if st.button("Update System Message", key="update_system2"):
+        st.session_state.system_message2 = st.session_state.system_message_input2
+        st.success("System message updated for Chatbot 2!")
     
     # Experiment loader section
     st.markdown("---")
@@ -268,11 +303,14 @@ with st.sidebar:
     st.markdown("---")
     
     # Chat history viewer
-    with st.expander("View Chat History"):
+    with st.expander("View Chat History (Bot 1)"):
         st.json(st.session_state.messages)
     
+    with st.expander("View Chat History (Bot 2)"):
+        st.json(st.session_state.messages2)
+    
     # Usage statistics viewer
-    with st.expander("View Usage Statistics"):
+    with st.expander("View Usage Statistics (Bot 1)"):
         if st.session_state.usage_stats:
             for i, usage in enumerate(st.session_state.usage_stats):
                 st.write(f"Message {i+1}:")
@@ -293,36 +331,97 @@ with st.sidebar:
         else:
             st.write("No usage data available yet.")
     
-    # Clear chat button
-    if st.button("Clear Chat"):
-        st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
-        st.session_state.usage_stats = []
-        st.success("Chat history cleared!")
+    with st.expander("View Usage Statistics (Bot 2)"):
+        if st.session_state.usage_stats2:
+            for i, usage in enumerate(st.session_state.usage_stats2):
+                st.write(f"Message {i+1}:")
+                st.write(f"- Prompt tokens: {usage['prompt_tokens']}")
+                st.write(f"- Completion tokens: {usage['completion_tokens']}")
+                st.write(f"- Total tokens: {usage['total_tokens']}")
+                st.divider()
+            
+            # Calculate total usage
+            total_prompt = sum(u["prompt_tokens"] for u in st.session_state.usage_stats2)
+            total_completion = sum(u["completion_tokens"] for u in st.session_state.usage_stats2)
+            total = sum(u["total_tokens"] for u in st.session_state.usage_stats2)
+            
+            st.write("### Total Usage")
+            st.write(f"- Total prompt tokens: {total_prompt}")
+            st.write(f"- Total completion tokens: {total_completion}")
+            st.write(f"- Total tokens: {total}")
+        else:
+            st.write("No usage data available yet.")
+    
+    # Clear chat buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Clear Chat 1"):
+            st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
+            st.session_state.usage_stats = []
+            st.success("Chat 1 history cleared!")
+    
+    with col2:
+        if st.button("Clear Chat 2"):
+            st.session_state.messages2 = [{"role": "assistant", "content": "How can I help you today?"}]
+            st.session_state.usage_stats2 = []
+            st.success("Chat 2 history cleared!")
     
     # Process display toggle - moved to bottom
     st.markdown("---")
-    st.session_state.show_process = st.checkbox("Show Model Process (Last message)", value=st.session_state.show_process)
+    st.session_state.show_process = st.checkbox("Show Model Process (Bot 1)", value=st.session_state.show_process)
+    st.session_state.show_process2 = st.checkbox("Show Model Process (Bot 2)", value=st.session_state.show_process2)
 
-# Main chat area with padding at bottom
-chat_container = st.container()
-with chat_container:
-    st.markdown('<div class="main-content">', unsafe_allow_html=True)  # Add a container with padding
-    
-    # Display chat messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    
-    st.markdown('</div>', unsafe_allow_html=True)  # Close the container
+# Create two columns for side by side chatbots
+left_col, right_col = st.columns(2)
 
-# Chat input - moved outside the main container
-if prompt := st.chat_input("Ask me anything..."):
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# Left column for first chatbot
+with left_col:
+    st.subheader("Chatbot 1")
+    chat_container1 = st.container()
+    with chat_container1:
+        st.markdown('<div class="main-content">', unsafe_allow_html=True)
+        
+        # Display chat messages for bot 1
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # Add user message to history
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Chat input for bot 1
+    if prompt := st.chat_input("Ask Bot 1 anything...", key="chat_input1"):
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Add user message to history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Generate and display response
+        generate_response(prompt, st.session_state.system_message, bot_num=1)
+
+# Right column for second chatbot
+with right_col:
+    st.subheader("Chatbot 2")
+    chat_container2 = st.container()
+    with chat_container2:
+        st.markdown('<div class="main-content">', unsafe_allow_html=True)
+        
+        # Display chat messages for bot 2
+        for message in st.session_state.messages2:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # Generate and display response
-    generate_response(prompt, st.session_state.system_message)
+    # Chat input for bot 2
+    if prompt := st.chat_input("Ask Bot 2 anything...", key="chat_input2"):
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Add user message to history
+        st.session_state.messages2.append({"role": "user", "content": prompt})
+        
+        # Generate and display response
+        generate_response(prompt, st.session_state.system_message2, bot_num=2)
