@@ -21,7 +21,7 @@ current_date = datetime.now().strftime("%Y-%m-%d")
 
 # Initialize session state variables if they don't exist
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
+    st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?", "bot": 1}]
 
 if "system_message" not in st.session_state:
     st.session_state.system_message = f"Today is {current_date}. You are a helpful assistant."
@@ -39,9 +39,6 @@ if "show_process" not in st.session_state:
     st.session_state.show_process = False
 
 # Initialize session state variables for the second chatbot
-if "messages2" not in st.session_state:
-    st.session_state.messages2 = [{"role": "assistant", "content": "How can I help you today?"}]
-
 if "system_message2" not in st.session_state:
     st.session_state.system_message2 = f"Today is {current_date}. You are a helpful assistant."
 
@@ -50,6 +47,10 @@ if "usage_stats2" not in st.session_state:
 
 if "show_process2" not in st.session_state:
     st.session_state.show_process2 = False
+
+# New state for tracking conversation flow
+if "awaiting_bot_response" not in st.session_state:
+    st.session_state.awaiting_bot_response = False
 
 def load_experiments():
     """Load all experiment JSON files from the prompts directory"""
@@ -85,30 +86,45 @@ def get_openai_client():
         api_key=token,
     )
 
-def generate_response(prompt, system_message, bot_num=1):
-    """Generate a response from the model and track usage"""
+def generate_response(prompt, system_message, bot_num=1, respondent_bot=None):
+    """
+    Generate a response from the model and track usage
+    
+    Parameters:
+    - prompt: The user or bot prompt to respond to
+    - system_message: The system message for this bot
+    - bot_num: Which bot is responding (1 or 2)
+    - respondent_bot: If responding to another bot, which one (1 or 2)
+    """
     client = get_openai_client()
     model_name = "gemini-2.0-flash"
     
     # Use the appropriate session state variables based on bot_num
-    messages_key = "messages" if bot_num == 1 else "messages2"
     usage_stats_key = "usage_stats" if bot_num == 1 else "usage_stats2"
     show_process_key = "show_process" if bot_num == 1 else "show_process2"
+    
+    # Prepare context for the model
+    if respondent_bot:
+        # Add special instruction if responding to another bot
+        responding_to = f"Bot {3-bot_num}"  # If bot_num is 1, respond to bot 2, and vice versa
+        system_message = f"{system_message}\n\nYou are Bot {bot_num} in a conversation. You should respond to {responding_to}'s last message."
     
     # Prepare messages by including all history and the system message
     messages = [{"role": "system", "content": system_message}]
     
-    # Add all previous messages from history
-    for msg in st.session_state[messages_key]:
+    # Add all previous messages from combined history
+    for msg in st.session_state.messages:
         if msg["role"] != "system":  # Skip system messages as we've already added it
-            messages.append(msg)
+            # For the model, we only care about role and content
+            messages.append({"role": msg["role"], "content": msg["content"]})
     
-    # Add the new user message
-    messages.append({"role": "user", "content": prompt})
+    # Add the new prompt if it's not already in the messages
+    if prompt and messages[-1]["content"] != prompt:
+        messages.append({"role": "user", "content": prompt})
     
     try:
         # Container for the assistant's response in the chat interface
-        response_container = st.chat_message("assistant")
+        response_container = st.chat_message("assistant", avatar=f"🤖{bot_num}")
         full_response = ""
         usage = None
         
@@ -133,8 +149,8 @@ def generate_response(prompt, system_message, bot_num=1):
         # Update the final response without the cursor
         message_placeholder.markdown(full_response)
         
-        # Add the message to history
-        st.session_state[messages_key].append({"role": "assistant", "content": full_response})
+        # Add the message to history with bot identifier
+        st.session_state.messages.append({"role": "assistant", "content": full_response, "bot": bot_num})
         
         # Store usage stats if available
         if usage:
@@ -174,30 +190,13 @@ def generate_response(prompt, system_message, bot_num=1):
                         st.markdown(f"- Completion tokens: {usage_dict.get('completion_tokens', 0)}")
                         st.markdown(f"- Total tokens: {usage_dict.get('total_tokens', 0)}")
         
-        return True
+        return full_response
     except Exception as e:
-        st.error(f"Error generating response: {str(e)}")
-        return False
+        st.error(f"Error generating response from Bot {bot_num}: {str(e)}")
+        return None
 
 # UI Layout
-st.title("🤖 HAI-5014's Dual Chatbot Interface")
-
-# Add CSS to make the input box stick to the bottom
-st.markdown("""
-    <style>
-    .stChatFloatingInputContainer {
-        position: fixed !important;
-        bottom: 0 !important;
-        padding: 1rem !important;
-        width: calc(50% - 125px) !important; /* Adjust for sidebar width and split in half */
-        background-color: white !important;
-        z-index: 1000 !important;
-    }
-    .main-content {
-        padding-bottom: 100px; /* Add space at the bottom for the fixed input */
-    }
-    </style>
-""", unsafe_allow_html=True)
+st.title("🤖 HAI-5014's Dual Chatbot Conversation")
 
 # Sidebar for settings
 with st.sidebar:
@@ -285,8 +284,10 @@ with st.sidebar:
                         
                         # Clear chat and start with opening message
                         opening_message = selected_condition.get('opening_message', "How can I help you today?")
-                        st.session_state.messages = [{"role": "assistant", "content": opening_message}]
+                        st.session_state.messages = [{"role": "assistant", "content": opening_message, "bot": 1}]
                         st.session_state.usage_stats = []
+                        st.session_state.usage_stats2 = []
+                        st.session_state.awaiting_bot_response = False
                         
                         # Save selected experiment and condition
                         st.session_state.selected_experiment = experiment_names[exp_index]
@@ -303,13 +304,10 @@ with st.sidebar:
     st.markdown("---")
     
     # Chat history viewer
-    with st.expander("View Chat History (Bot 1)"):
+    with st.expander("View Chat History"):
         st.json(st.session_state.messages)
     
-    with st.expander("View Chat History (Bot 2)"):
-        st.json(st.session_state.messages2)
-    
-    # Usage statistics viewer
+    # Usage statistics viewer for both bots
     with st.expander("View Usage Statistics (Bot 1)"):
         if st.session_state.usage_stats:
             for i, usage in enumerate(st.session_state.usage_stats):
@@ -352,44 +350,41 @@ with st.sidebar:
         else:
             st.write("No usage data available yet.")
     
-    # Clear chat buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Clear Chat 1"):
-            st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
-            st.session_state.usage_stats = []
-            st.success("Chat 1 history cleared!")
-    
-    with col2:
-        if st.button("Clear Chat 2"):
-            st.session_state.messages2 = [{"role": "assistant", "content": "How can I help you today?"}]
-            st.session_state.usage_stats2 = []
-            st.success("Chat 2 history cleared!")
+    # Clear chat button
+    if st.button("Clear Conversation"):
+        st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?", "bot": 1}]
+        st.session_state.usage_stats = []
+        st.session_state.usage_stats2 = []
+        st.session_state.awaiting_bot_response = False
+        st.success("Conversation history cleared!")
     
     # Process display toggle - moved to bottom
     st.markdown("---")
     st.session_state.show_process = st.checkbox("Show Model Process (Bot 1)", value=st.session_state.show_process)
     st.session_state.show_process2 = st.checkbox("Show Model Process (Bot 2)", value=st.session_state.show_process2)
 
-# Create two columns for side by side chatbots
-left_col, right_col = st.columns(2)
+# Main chat container
+st.subheader("Conversation Between Two AIs")
+st.write("Enter a prompt to start the conversation between Bot 1 and Bot 2. They will take turns responding to each other.")
 
-# Left column for first chatbot
-with left_col:
-    st.subheader("Chatbot 1")
-    chat_container1 = st.container()
-    with chat_container1:
-        st.markdown('<div class="main-content">', unsafe_allow_html=True)
-        
-        # Display chat messages for bot 1
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
+# Display chat messages for the combined conversation
+chat_container = st.container()
+with chat_container:
+    # Display the conversation history
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            with st.chat_message("user"):
                 st.markdown(message["content"])
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Chat input for bot 1
-    if prompt := st.chat_input("Ask Bot 1 anything...", key="chat_input1"):
+        else:
+            # Use different avatars for each bot
+            bot_num = message.get("bot", 1)  # Default to bot 1 if not specified
+            with st.chat_message("assistant", avatar=f"🤖{bot_num}"):
+                st.markdown(message["content"])
+
+# Chat input for user to initiate conversation
+if not st.session_state.awaiting_bot_response:
+    prompt = st.chat_input("Enter your message to start the conversation...")
+    if prompt:
         # Display user message
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -397,31 +392,36 @@ with left_col:
         # Add user message to history
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Generate and display response
-        generate_response(prompt, st.session_state.system_message, bot_num=1)
-
-# Right column for second chatbot
-with right_col:
-    st.subheader("Chatbot 2")
-    chat_container2 = st.container()
-    with chat_container2:
-        st.markdown('<div class="main-content">', unsafe_allow_html=True)
-        
-        # Display chat messages for bot 2
-        for message in st.session_state.messages2:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+        # Bot 1 responds to user input
+        st.session_state.awaiting_bot_response = True
+        st.rerun()
+elif st.session_state.awaiting_bot_response:
+    # Check whose turn it is to respond
+    last_message = st.session_state.messages[-1]
     
-    # Chat input for bot 2
-    if prompt := st.chat_input("Ask Bot 2 anything...", key="chat_input2"):
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    if last_message["role"] == "user":
+        # Bot 1 responds to user input
+        bot1_response = generate_response(last_message["content"], st.session_state.system_message, bot_num=1)
         
-        # Add user message to history
-        st.session_state.messages2.append({"role": "user", "content": prompt})
+        if bot1_response:
+            # Now let Bot 2 respond to Bot 1
+            bot2_response = generate_response(bot1_response, st.session_state.system_message2, bot_num=2, respondent_bot=1)
+            
+            if bot2_response:
+                # After both bots have responded, wait for user input again
+                st.session_state.awaiting_bot_response = False
+                st.rerun()
+    
+    elif last_message["role"] == "assistant" and last_message.get("bot") == 1:
+        # Bot 2 responds to Bot 1
+        bot2_response = generate_response(last_message["content"], st.session_state.system_message2, bot_num=2, respondent_bot=1)
         
-        # Generate and display response
-        generate_response(prompt, st.session_state.system_message2, bot_num=2)
+        if bot2_response:
+            # After both bots have responded, wait for user input again
+            st.session_state.awaiting_bot_response = False
+            st.rerun()
+    
+    elif last_message["role"] == "assistant" and last_message.get("bot") == 2:
+        # Wait for user input
+        st.session_state.awaiting_bot_response = False
+        st.rerun()
