@@ -88,7 +88,7 @@ def get_openai_client():
 def generate_response(prompt, system_message, bot_id="bot1"):
     """Generate a response from the model and track usage"""
     client = get_openai_client()
-    model_name = os.getenv("LLM_MODEL")
+    model_name = "gemini-2.0-flash"
     
     # Determine which message and usage history to use
     if bot_id == "bot1":
