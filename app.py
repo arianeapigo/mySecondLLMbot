@@ -52,6 +52,14 @@ if "show_process2" not in st.session_state:
 if "awaiting_bot_response" not in st.session_state:
     st.session_state.awaiting_bot_response = False
 
+# Add a state variable to track which bot should respond next
+if "next_responder" not in st.session_state:
+    st.session_state.next_responder = None
+
+# Initialize state for bot2 response timing
+if "bot2_ready" not in st.session_state:
+    st.session_state.bot2_ready = False
+
 def load_experiments():
     """Load all experiment JSON files from the prompts directory"""
     experiments = []
@@ -124,7 +132,11 @@ def generate_response(prompt, system_message, bot_num=1, respondent_bot=None):
     
     try:
         # Container for the assistant's response in the chat interface
-        response_container = st.chat_message("assistant", avatar=f"🤖{bot_num}")
+        if bot_num == 1:
+            avatar = "💻"  # Computer emoji for bot 1
+        else:
+            avatar = "🤖"  # Robot emoji for bot 2
+        response_container = st.chat_message("assistant", avatar=avatar)
         full_response = ""
         usage = None
         
@@ -356,6 +368,8 @@ with st.sidebar:
         st.session_state.usage_stats = []
         st.session_state.usage_stats2 = []
         st.session_state.awaiting_bot_response = False
+        st.session_state.next_responder = None
+        st.session_state.bot2_ready = False
         st.success("Conversation history cleared!")
     
     # Process display toggle - moved to bottom
@@ -371,57 +385,68 @@ st.write("Enter a prompt to start the conversation between Bot 1 and Bot 2. They
 chat_container = st.container()
 with chat_container:
     # Display the conversation history
-    for message in st.session_state.messages:
+    for idx, message in enumerate(st.session_state.messages):
         if message["role"] == "user":
             with st.chat_message("user"):
                 st.markdown(message["content"])
         else:
             # Use different avatars for each bot
             bot_num = message.get("bot", 1)  # Default to bot 1 if not specified
-            with st.chat_message("assistant", avatar=f"🤖{bot_num}"):
-                st.markdown(message["content"])
+            if bot_num == 1:
+                with st.chat_message("assistant", avatar="💻"):
+                    st.markdown(f"**Bot 1:** {message['content']}")
+            else:
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(f"**Bot 2:** {message['content']}")
 
 # Chat input for user to initiate conversation
 if not st.session_state.awaiting_bot_response:
     prompt = st.chat_input("Enter your message to start the conversation...")
     if prompt:
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Add user message to history
+        # Add user message to history first
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Bot 1 responds to user input
+        # Set Bot 1 to respond next
         st.session_state.awaiting_bot_response = True
+        st.session_state.next_responder = 1
         st.rerun()
+        
 elif st.session_state.awaiting_bot_response:
-    # Check whose turn it is to respond
-    last_message = st.session_state.messages[-1]
-    
-    if last_message["role"] == "user":
-        # Bot 1 responds to user input
-        bot1_response = generate_response(last_message["content"], st.session_state.system_message, bot_num=1)
-        
-        if bot1_response:
-            # Now let Bot 2 respond to Bot 1
-            bot2_response = generate_response(bot1_response, st.session_state.system_message2, bot_num=2, respondent_bot=1)
+    try:
+        # Use the next_responder variable to determine which bot should respond
+        if st.session_state.next_responder == 1:
+            # Get the last message to respond to
+            last_message_idx = len(st.session_state.messages) - 1
+            last_message = st.session_state.messages[last_message_idx]
             
-            if bot2_response:
-                # After both bots have responded, wait for user input again
-                st.session_state.awaiting_bot_response = False
-                st.rerun()
-    
-    elif last_message["role"] == "assistant" and last_message.get("bot") == 1:
-        # Bot 2 responds to Bot 1
-        bot2_response = generate_response(last_message["content"], st.session_state.system_message2, bot_num=2, respondent_bot=1)
-        
-        if bot2_response:
-            # After both bots have responded, wait for user input again
-            st.session_state.awaiting_bot_response = False
+            # Bot 1 responds
+            bot1_response = generate_response(last_message["content"], st.session_state.system_message, bot_num=1)
+            
+            # Important: Add a placeholder here to force Streamlit to complete rendering
+            st.empty()
+            
+            # Set Bot 2 to respond next
+            st.session_state.next_responder = 2
+            
+            # Use this approach instead of rerun to avoid interrupting the rendering
+            import time
+            time.sleep(1)  # Short delay to ensure UI updates
             st.rerun()
-    
-    elif last_message["role"] == "assistant" and last_message.get("bot") == 2:
-        # Wait for user input
+        
+        elif st.session_state.next_responder == 2:
+            # Get the last message (which should be Bot 1's response)
+            last_message_idx = len(st.session_state.messages) - 1
+            last_message = st.session_state.messages[last_message_idx]
+            
+            # Bot 2 responds to Bot 1
+            bot2_response = generate_response(last_message["content"], st.session_state.system_message2, bot_num=2, respondent_bot=1)
+            
+            # Reset the conversation flow to wait for user input
+            st.session_state.awaiting_bot_response = False
+            st.session_state.next_responder = None
+            # Don't rerun here! Let the user provide input
+    except Exception as e:
+        st.error(f"Error in conversation flow: {str(e)}")
+        # Reset on error
         st.session_state.awaiting_bot_response = False
-        st.rerun()
+        st.session_state.next_responder = None
