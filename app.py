@@ -10,8 +10,8 @@ load_dotenv()
 
 # Set page config
 st.set_page_config(
-    page_title="HAI-5014's Second Chatbot",
-    page_icon="🤖",
+    page_title="Debate Chatbot Group Chat",
+    page_icon="💬",
     layout="wide"
 )
 
@@ -21,16 +21,24 @@ current_date = datetime.now().strftime("%Y-%m-%d")
 
 # Initialize session state variables if they don't exist
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant1", "content": "Hello! I'm Bot 1, how can I help you today?"}]
+    st.session_state.messages = [{"role": "assistant1", "content": "Hello! I'm Bot 1. Bot 2 is also in this group chat. How can we help you today?"}]
 
 if "waiting_for_bot2" not in st.session_state:
     st.session_state.waiting_for_bot2 = False
 
 if "system_message" not in st.session_state:
-    st.session_state.system_message = f"Today is {current_date}. You are Bot 1 in a group chat with Bot 2 and a user. You are the primary responder who answers questions directly and practically. Always identify yourself as Bot 1 and be helpful but concise."
+    st.session_state.system_message = f"""Today is {current_date}. You are Bot 1 in a casual group chat. Keep it friendly and informal! Start messages with "Bot 1:" and use casual language.
+
+When responding to the user, acknowledge them first and share your views. When disagreeing with Bot 2, address both the user and Bot 2 (e.g., "Well, I see what Bot 2 means, but what do you think about...").
+
+Keep responses conversational, under 75 words, and use emojis occasionally. Make everyone feel included in the discussion! 💭"""
 
 if "system_message2" not in st.session_state:
-    st.session_state.system_message2 = f"Today is {current_date}. You are Bot 2 in a group chat. You wait for Bot 1's response, then add your own unique perspective or additional insights. Always identify yourself as Bot 2. You should complement Bot 1's response rather than simply agreeing. Be helpful but concise and focus on adding value that Bot 1 might have missed."
+    st.session_state.system_message2 = f"""Today is {current_date}. You are Bot 2 in a casual group chat. Keep it friendly and informal! Start with "Bot 2:" and keep the group discussion flowing.
+
+When joining the conversation, acknowledge both the user and Bot 1's perspectives. Include everyone in your responses (e.g., "That's an interesting point! What if we looked at it this way..."). Ask questions to keep the user engaged.
+
+Keep responses under 75 words. Use emojis occasionally. Be playfully skeptical but always inclusive! 💭"""
 
 if "usage_stats" not in st.session_state:
     st.session_state.usage_stats = []
@@ -87,8 +95,11 @@ def generate_response(prompt, is_bot2=False):
     system_message = st.session_state.system_message2 if is_bot2 else st.session_state.system_message
     bot_role = "assistant2" if is_bot2 else "assistant1"
     
+    # Message history is now handled in the main flow for better UI control
+    # No need to add user message here as it's handled in the main flow
+    
     # Prepare messages by including all history and the system message
-    messages = [{"role": "system", "content": system_message}]            # Add relevant messages from history
+    messages = [{"role": "system", "content": system_message}]
     for msg in st.session_state.messages:
         if msg["role"] != "system":  # Skip system messages as we've already added it
             if is_bot2:
@@ -111,7 +122,6 @@ def generate_response(prompt, is_bot2=False):
         # Initialize response variables
         full_response = ""
         usage = None
-        message_placeholder = st.empty()  # Create an empty placeholder first
         
         # Clean up and validate messages before sending
         api_messages = []
@@ -129,23 +139,29 @@ def generate_response(prompt, is_bot2=False):
             stream_options={'include_usage': True}
         )
         
-        # Stream the response
-        message_placeholder = response_container.empty()
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                content_chunk = chunk.choices[0].delta.content
-                if content_chunk is not None:  # Only append if content is not None
-                    full_response += content_chunk
-                    message_placeholder.markdown(full_response + "▌")
-                    
-            if chunk.usage:
-                usage = chunk.usage
+        # Add a temporary message to history first to reserve the spot
+        message_idx = len(st.session_state.messages)
+        st.session_state.messages.append({"role": bot_role, "content": ""})
         
-        # Update the final response without the cursor
-        message_placeholder.markdown(full_response)
-        
-        # Add the message to history
-        st.session_state.messages.append({"role": bot_role, "content": full_response})
+        # Create chat message container with appropriate avatar before streaming
+        with st.chat_message(bot_role, avatar="🤖" if bot_role == "assistant1" else "🎯"):
+            message_placeholder = st.empty()
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    content_chunk = chunk.choices[0].delta.content
+                    if content_chunk is not None:  # Only append if content is not None
+                        full_response += content_chunk
+                        message_placeholder.markdown(full_response + "▌")
+                        # Update the message in history as we stream
+                        st.session_state.messages[message_idx]["content"] = full_response
+                        
+                if chunk.usage:
+                    usage = chunk.usage
+            
+            # Update the final response without the cursor
+            message_placeholder.markdown(full_response)
+            # Ensure final message content is set
+            st.session_state.messages[message_idx]["content"] = full_response
         
         # Store usage stats if available
         if usage:
@@ -191,7 +207,7 @@ def generate_response(prompt, is_bot2=False):
         return False
 
 # UI Layout
-st.title("🤖 HAI-5014's Second Chatbot")
+st.title("💬 Debate Chatbot Group Chat")
 
 # Add CSS to make the input box stick to the bottom
 st.markdown("""
@@ -354,19 +370,19 @@ chat_container = st.container()
 with chat_container:
     st.markdown('<div class="main-content">', unsafe_allow_html=True)  # Add a container with padding
     
-    # Display chat messages
-    response_container = st.container()
-    with response_container:
-        for message in st.session_state.messages:
-            if message["role"] == "assistant1":
-                with st.chat_message(message["role"], avatar="🤖"):
-                    st.markdown(message["content"])
-            elif message["role"] == "assistant2":
-                with st.chat_message(message["role"], avatar="🎯"):
-                    st.markdown(message["content"])
-            else:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+    # Display chat messages from session state only
+    for message in st.session_state.messages:
+        if not message["content"]:  # Skip empty messages
+            continue
+        if message["role"] == "assistant1":
+            with st.chat_message(message["role"], avatar="🤖"):
+                st.markdown(message["content"])
+        elif message["role"] == "assistant2":
+            with st.chat_message(message["role"], avatar="🎯"):
+                st.markdown(message["content"])
+        else:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
     
     st.markdown('</div>', unsafe_allow_html=True)  # Close the container
 
@@ -374,30 +390,31 @@ with chat_container:
 if "current_prompt" not in st.session_state:
     st.session_state.current_prompt = None
 
-# Chat input - moved outside the main container
+# Chat input handling - improved flow with proper message display
 if prompt := st.chat_input("Ask me anything..." if not st.session_state.waiting_for_bot2 else "Waiting for Bot 2...", disabled=st.session_state.waiting_for_bot2):
-    # Store prompt in session state
+    # Store prompt in session state and add to history
     st.session_state.current_prompt = prompt
-    
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    
-    # Add user message to history
     st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Generate Bot 1's response
-    if generate_response(prompt, is_bot2=False):
-        # Set waiting flag for Bot 2
-        st.session_state.waiting_for_bot2 = True
-        st.rerun()
+    # Add a small delay to ensure the user message is displayed first
+    st.rerun()
+
+# Handle Bot 1's response in the next run cycle
+if st.session_state.current_prompt and not st.session_state.waiting_for_bot2:
+    # Check if there's a pending user prompt to respond to
+    if not any(msg["role"] == "assistant1" and msg["content"].strip() == "" for msg in st.session_state.messages):
+        # Generate Bot 1's response
+        if generate_response(st.session_state.current_prompt, is_bot2=False):
+            # Set waiting flag for Bot 2
+            st.session_state.waiting_for_bot2 = True
+            st.rerun()
 
 # Handle Bot 2's response if we're waiting for it
 if st.session_state.waiting_for_bot2 and st.session_state.current_prompt is not None:
-    # Generate Bot 2's response
-    if generate_response(st.session_state.current_prompt, is_bot2=True):
-        # Reset states
-        st.session_state.waiting_for_bot2 = False
-        st.session_state.current_prompt = None
-        # Rerun to refresh UI and enable input
-        st.rerun()
+    # Check if Bot 1's response is complete
+    if not any(msg["role"] == "assistant2" and msg["content"].strip() == "" for msg in st.session_state.messages):
+        # Generate Bot 2's response
+        if generate_response(st.session_state.current_prompt, is_bot2=True):
+            # Reset states
+            st.session_state.waiting_for_bot2 = False
+            st.session_state.current_prompt = None
+            st.rerun()
