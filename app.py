@@ -21,10 +21,16 @@ current_date = datetime.now().strftime("%Y-%m-%d")
 
 # Initialize session state variables if they don't exist
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
+    st.session_state.messages = [{"role": "assistant1", "content": "Hello! I'm Bot 1, how can I help you today?"}]
+
+if "waiting_for_bot2" not in st.session_state:
+    st.session_state.waiting_for_bot2 = False
 
 if "system_message" not in st.session_state:
-    st.session_state.system_message = f"Today is {current_date}. You are a helpful assistant."
+    st.session_state.system_message = f"Today is {current_date}. You are Bot 1 in a group chat with Bot 2 and a user. You are the primary responder who answers questions directly and practically. Always identify yourself as Bot 1 and be helpful but concise."
+
+if "system_message2" not in st.session_state:
+    st.session_state.system_message2 = f"Today is {current_date}. You are Bot 2 in a group chat. You wait for Bot 1's response, then add your own unique perspective or additional insights. Always identify yourself as Bot 2. You should complement Bot 1's response rather than simply agreeing. Be helpful but concise and focus on adding value that Bot 1 might have missed."
 
 if "usage_stats" not in st.session_state:
     st.session_state.usage_stats = []
@@ -72,30 +78,52 @@ def get_openai_client():
         api_key=token,
     )
 
-def generate_response(prompt, system_message):
+def generate_response(prompt, is_bot2=False):
     """Generate a response from the model and track usage"""
     client = get_openai_client()
     model_name = "gemini-2.0-flash"
     
-    # Prepare messages by including all history and the system message
-    messages = [{"role": "system", "content": system_message}]
+    # Choose the appropriate system message and role
+    system_message = st.session_state.system_message2 if is_bot2 else st.session_state.system_message
+    bot_role = "assistant2" if is_bot2 else "assistant1"
     
-    # Add all previous messages from history
+    # Prepare messages by including all history and the system message
+    messages = [{"role": "system", "content": system_message}]            # Add relevant messages from history
     for msg in st.session_state.messages:
         if msg["role"] != "system":  # Skip system messages as we've already added it
-            messages.append(msg)
+            if is_bot2:
+                # For Bot 2, include Bot 1's messages as context
+                if msg["role"] == "assistant1":
+                    messages.append({"role": "user", "content": f"Bot 1 said: {msg['content']}"})
+                elif msg["role"] == "user":
+                    messages.append({"role": "user", "content": msg["content"]})
+                elif msg["role"] == "assistant2":
+                    messages.append({"role": "assistant", "content": msg["content"]})
+            else:
+                # For Bot 1, just convert assistant roles to "assistant"
+                api_role = "assistant" if msg["role"].startswith("assistant") else msg["role"]
+                messages.append({"role": api_role, "content": msg["content"]})
     
     # Add the new user message
     messages.append({"role": "user", "content": prompt})
     
     try:
-        # Container for the assistant's response in the chat interface
-        response_container = st.chat_message("assistant")
+        # Initialize response variables
         full_response = ""
         usage = None
+        message_placeholder = st.empty()  # Create an empty placeholder first
+        
+        # Clean up and validate messages before sending
+        api_messages = []
+        for msg in messages:
+            if msg.get("content"):  # Only include messages with content
+                api_messages.append({
+                    "role": msg["role"],
+                    "content": str(msg["content"])  # Ensure content is string
+                })
         
         response = client.chat.completions.create(
-            messages=messages,
+            messages=api_messages,
             model=model_name,
             stream=True,
             stream_options={'include_usage': True}
@@ -104,10 +132,11 @@ def generate_response(prompt, system_message):
         # Stream the response
         message_placeholder = response_container.empty()
         for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
+            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                 content_chunk = chunk.choices[0].delta.content
-                full_response += content_chunk
-                message_placeholder.markdown(full_response + "▌")
+                if content_chunk is not None:  # Only append if content is not None
+                    full_response += content_chunk
+                    message_placeholder.markdown(full_response + "▌")
                     
             if chunk.usage:
                 usage = chunk.usage
@@ -116,7 +145,7 @@ def generate_response(prompt, system_message):
         message_placeholder.markdown(full_response)
         
         # Add the message to history
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        st.session_state.messages.append({"role": bot_role, "content": full_response})
         
         # Store usage stats if available
         if usage:
@@ -185,18 +214,34 @@ st.markdown("""
 with st.sidebar:
     st.subheader("Settings")
     
-    # System message editor - use the value from session_state directly
+    # System message editor for Bot 1 - use the value from session_state directly
+    st.subheader("Bot 1 System Message")
     system_message_value = st.session_state.system_message
     st.text_area(
-        "Edit System Message", 
+        "Edit Bot 1 System Message", 
         value=system_message_value,
         key="system_message_input",
         height=150
     )
     
-    if st.button("Update System Message"):
+    if st.button("Update Bot 1 Message"):
         st.session_state.system_message = st.session_state.system_message_input
-        st.success("System message updated!")
+        st.success("Bot 1 system message updated!")
+    
+    # System message editor for Bot 2
+    st.markdown("---")
+    st.subheader("Bot 2 System Message")
+    system_message2_value = st.session_state.system_message2
+    st.text_area(
+        "Edit Bot 2 System Message", 
+        value=system_message2_value,
+        key="system_message2_input",
+        height=150
+    )
+    
+    if st.button("Update Bot 2 Message"):
+        st.session_state.system_message2 = st.session_state.system_message2_input
+        st.success("Bot 2 system message updated!")
     
     # Experiment loader section
     st.markdown("---")
@@ -295,8 +340,9 @@ with st.sidebar:
     
     # Clear chat button
     if st.button("Clear Chat"):
-        st.session_state.messages = [{"role": "assistant", "content": "How can I help you today?"}]
+        st.session_state.messages = [{"role": "assistant1", "content": "Hello! I'm Bot 1, how can I help you today?"}]
         st.session_state.usage_stats = []
+        st.session_state.waiting_for_bot2 = False
         st.success("Chat history cleared!")
     
     # Process display toggle - moved to bottom
@@ -309,14 +355,30 @@ with chat_container:
     st.markdown('<div class="main-content">', unsafe_allow_html=True)  # Add a container with padding
     
     # Display chat messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    response_container = st.container()
+    with response_container:
+        for message in st.session_state.messages:
+            if message["role"] == "assistant1":
+                with st.chat_message(message["role"], avatar="🤖"):
+                    st.markdown(message["content"])
+            elif message["role"] == "assistant2":
+                with st.chat_message(message["role"], avatar="🎯"):
+                    st.markdown(message["content"])
+            else:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
     
     st.markdown('</div>', unsafe_allow_html=True)  # Close the container
 
+# Store the current prompt in session state to maintain it between reruns
+if "current_prompt" not in st.session_state:
+    st.session_state.current_prompt = None
+
 # Chat input - moved outside the main container
-if prompt := st.chat_input("Ask me anything..."):
+if prompt := st.chat_input("Ask me anything..." if not st.session_state.waiting_for_bot2 else "Waiting for Bot 2...", disabled=st.session_state.waiting_for_bot2):
+    # Store prompt in session state
+    st.session_state.current_prompt = prompt
+    
     # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -324,5 +386,18 @@ if prompt := st.chat_input("Ask me anything..."):
     # Add user message to history
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Generate and display response
-    generate_response(prompt, st.session_state.system_message)
+    # Generate Bot 1's response
+    if generate_response(prompt, is_bot2=False):
+        # Set waiting flag for Bot 2
+        st.session_state.waiting_for_bot2 = True
+        st.rerun()
+
+# Handle Bot 2's response if we're waiting for it
+if st.session_state.waiting_for_bot2 and st.session_state.current_prompt is not None:
+    # Generate Bot 2's response
+    if generate_response(st.session_state.current_prompt, is_bot2=True):
+        # Reset states
+        st.session_state.waiting_for_bot2 = False
+        st.session_state.current_prompt = None
+        # Rerun to refresh UI and enable input
+        st.rerun()
